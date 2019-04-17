@@ -123,12 +123,12 @@ public:
         return socket ? socket->fd : -1;
     }
 
-    inline bool has_bound()
+    inline bool has_bound(const enum swEvent_type event = SW_EVENT_RDWR)
     {
-        return read_co || write_co;
+        return !!get_bound_co(event);
     }
 
-    inline Coroutine* get_bound_co(enum swEvent_type event)
+    inline Coroutine* get_bound_co(const enum swEvent_type event)
     {
         if (likely(event & SW_EVENT_READ))
         {
@@ -141,7 +141,7 @@ public:
         return nullptr;
     }
 
-    inline long get_bound_cid(enum swEvent_type event = SW_EVENT_RDWR)
+    inline long get_bound_cid(const enum swEvent_type event = SW_EVENT_RDWR)
     {
         Coroutine *co = get_bound_co(event);
         return co ? co->get_cid() : 0;

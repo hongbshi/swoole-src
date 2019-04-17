@@ -1259,6 +1259,9 @@ uint64_t swoole_hash_key(char *str, int str_len);
 uint32_t swoole_common_multiple(uint32_t u, uint32_t v);
 uint32_t swoole_common_divisor(uint32_t u, uint32_t v);
 
+extern void swoole_sha1(const char *str, int _len, unsigned char *digest);
+extern void swoole_sha256(const char *str, int _len, unsigned char *digest);
+
 static sw_inline uint16_t swoole_swap_endian16(uint16_t x)
 {
     return (((x & 0xff) << 8) | ((x & 0xff00) >> 8));
