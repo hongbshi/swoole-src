@@ -187,13 +187,14 @@ public:
         return data;
     }
 
-    inline bool send_raw(const char *data, size_t length)
+    inline bool send_raw(const char *data, size_t length, double timeout = 0)
     {
         if (unlikely(!socket))
         {
             connection_error();
             return false;
         }
+        // TODO: timeout_setter
         if (unlikely(socket->send_all(data, length) != (ssize_t) length))
         {
             io_error();
@@ -203,7 +204,7 @@ public:
     }
 
     bool send_packet(mysql::client_packet *packet);
-    bool send_command(enum sw_mysql_command command, const char* sql = nullptr, size_t length = 0);
+    bool send_command(enum sw_mysql_command command, const char* sql = nullptr, size_t length = 0, double timeout = 0);
 
     void query(zval *return_value, const char *statement, size_t statement_length, double timeout = 0);
     void recv_query_response(zval *return_value);
@@ -216,7 +217,7 @@ public:
     bool commit();
     bool rollback();
 
-    mysql_statement* prepare(const char *statement, size_t statement_length, double timeout);
+    mysql_statement* prepare(const char *statement, size_t statement_length, double timeout = 0);
     mysql_statement* recv_prepare_response();
 
     void close();
@@ -590,18 +591,19 @@ bool mysql_client::send_packet(mysql::client_packet *packet)
     return false;
 }
 
-bool mysql_client::send_command(enum sw_mysql_command command, const char* sql, size_t length)
+bool mysql_client::send_command(enum sw_mysql_command command, const char* sql, size_t length, double timeout)
 {
     if (likely(SW_MYSQL_PACKET_HEADER_SIZE + 1 + length <= SwooleG.pagesize))
     {
         mysql::command_packet command_packet(command, sql, length);
-        return send_raw(command_packet.get_data(), command_packet.get_data_length());
+        return send_raw(command_packet.get_data(), command_packet.get_data_length(), timeout);
     }
     else
     {
         size_t send_s = MIN(length, SW_MYSQL_MAX_PACKET_BODY_SIZE - 1), send_n = send_s, number = 0;
         mysql::command_packet command_packet(command);
         command_packet.set_header(1 + send_s, number++);
+        // TODO: timeout controller
         if (unlikely(
             !send_raw(command_packet.get_data(), SW_MYSQL_PACKET_HEADER_SIZE + 1)) ||
             !send_raw(sql, send_s)
@@ -727,7 +729,7 @@ void mysql_client::query(zval *return_value, const char *statement, size_t state
     {
         RETURN_FALSE;
     }
-    if (unlikely(!send_command(SW_MYSQL_COM_QUERY, statement, statement_length)))
+    if (unlikely(!send_command(SW_MYSQL_COM_QUERY, statement, statement_length, timeout)))
     {
         RETURN_FALSE;
     }
@@ -1021,7 +1023,7 @@ mysql_statement* mysql_client::prepare(const char *statement, size_t statement_l
     {
         return nullptr;
     }
-    if (unlikely(!send_command(SW_MYSQL_COM_STMT_PREPARE, statement, statement_length)))
+    if (unlikely(!send_command(SW_MYSQL_COM_STMT_PREPARE, statement, statement_length, timeout)))
     {
         return nullptr;
     }
@@ -1245,24 +1247,27 @@ void mysql_statement::recv_execute_response(zval *return_value)
         client->state = ok_packet.server_status.more_results_exists() ? SW_MYSQL_STATE_MORE_RESULTS : SW_MYSQL_STATE_IDLE;
         RETURN_TRUE;
     }
-#ifdef SW_LOG_TRACE_OPEN
-    else
-    {
+    do {
+        // skip fileds info if length is equal
+        // (because we have already known it when we prepared statement)
         mysql::lcb_packet lcb_packet(data);
-        SW_ASSERT(lcb_packet.length == result.get_fields_length());
-    }
-#endif
-    // skip fileds info (because we have already known it when we prepared statement)
-    for (size_t i = 0; i < result.get_fields_length(); i++)
-    {
-        if (unlikely(!(data = client->recv_packet())))
+        bool should_parse_fields = lcb_packet.length != result.get_fields_length();
+        if (unlikely(should_parse_fields))
         {
-            RETURN_FALSE;
+            result.alloc_fields(lcb_packet.length);
         }
-#ifdef SW_LOG_TRACE_OPEN
-        mysql::field_packet field_packet(data);
-#endif
-    }
+        for (size_t i = 0; i < result.get_fields_length(); i++)
+        {
+            if (unlikely(!(data = client->recv_packet())))
+            {
+                RETURN_FALSE;
+            }
+            if (unlikely(should_parse_fields))
+            {
+                result.set_field(i, data);
+            }
+        }
+    } while (0);
     // expect eof
     if (unlikely(!(data = client->recv_eof_packet())))
     {
@@ -1793,6 +1798,10 @@ static PHP_METHOD(swoole_mysql_coro, query)
     ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
     mc->query(return_value, sql, sql_length, timeout);
+    if (UNEXPECTED(Z_TYPE_P(return_value) == IS_FALSE))
+    {
+        swoole_mysql_coro_sync_error_properties(getThis(), mc->error_code, mc->error_msg.c_str());
+    }
 }
 
 static PHP_METHOD(swoole_mysql_coro, fetch)
