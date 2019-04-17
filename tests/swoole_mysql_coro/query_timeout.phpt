@@ -16,14 +16,17 @@ go(function (){
     ]);
     if (!$res)
     {
-        fail : echo "CONNECT ERROR\n";
-
+        fail:
+        echo "CONNECT ERROR\n";
         return;
     }
-    $ret = $mysql->query('select sleep(1)', 0.2);
+    $s = microtime(true);
+    $timeout = mt_rand(100, 500) / 1000;
+    $ret = $mysql->query('select sleep(1)', $timeout);
+    time_approximate($timeout, microtime(true) - $s);
     if (!$ret)
     {
-        assert($mysql->errno, SOCKET_ETIMEDOUT);
+        assert($mysql->errno === SOCKET_ETIMEDOUT);
         echo $mysql->error."\n";
     }
     else

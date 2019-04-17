@@ -1,5 +1,5 @@
 --TEST--
-swoole_mysql_coro: ERR Instead of EOF 
+swoole_mysql_coro: ERR Instead of EOF
 --SKIPIF--
 <?php require __DIR__ . '/../include/skipif.inc'; ?>
 --FILE--
@@ -14,11 +14,12 @@ go(function () {
         'database' => MYSQL_SERVER_DB
     ];
     $db->connect($server);
-
-    $res = $db->query("EXPLAIN SELECT * FROM dual;");
-    assert(!$res);
-    assert($db->errno === 1096);
-    assert($db->error === "No tables used");
+    if (!$db->query("EXPLAIN SELECT * FROM dual;")) {
+        echo $db->errno . PHP_EOL;
+        echo $db->error . PHP_EOL;
+    }
 });
 ?>
 --EXPECT--
+1096
+SQLSTATE[HY000] [1096] No tables used
