@@ -42,6 +42,9 @@ SQL
     if (!$ret) {
         exit('unable to create table.');
     }
+    register_shutdown_function(function () use ($mysql) {
+        $mysql->query('DROP TABLE `firmware`');
+    });
     $max_allowed_packet = $mysql->query('show VARIABLES like \'max_allowed_packet\'');
     $max_allowed_packet = $max_allowed_packet[0]['Value'] / 1024 / 1024;
     phpt_var_dump("max_allowed_packet: {$max_allowed_packet}M");
@@ -66,7 +69,7 @@ SQL
         $f_remark = get_safe_random();
         $sql = "INSERT INTO `firmware` (`fid`, `firmware`, `f_md5`, `f_remark`) " .
             "VALUES ({$fid}, '{$firmware}', '{$f_md5}', '{$f_remark}')";
-        $ret = $pdo->exec($sql);
+        $ret = $mysql_query->query($sql);
         if (assert($ret)) {
             $sql = 'SELECT * FROM `test`.`firmware` WHERE fid=';
             $pdo_stmt = $pdo->prepare("{$sql}?");
@@ -86,15 +89,17 @@ SQL
             });
             for ($i = 3; $i--;) {
                 list($from, $result) = $chan->pop(10);
-                assert($result['fid'] == $fid, var_dump_return($result));
-                assert($result['firmware'] === $firmware);
-                assert($result['f_md5'] === $f_md5);
-                assert($result['f_remark'] === $f_remark);
+                if (assert($result['fid'] == $fid)) {
+                    assert($result['firmware'] === $firmware);
+                    assert($result['f_md5'] === $f_md5);
+                    assert($result['f_remark'] === $f_remark);
+                } else {
+                    phpt_var_dump($result);
+                }
                 phpt_var_dump($from, (strlen($firmware) / 1024 / 1024) . 'M');
             }
         }
     }
-    $mysql_query->query('DROP TABLE `firmware`');
     echo "DONE\n";
 });
 ?>
