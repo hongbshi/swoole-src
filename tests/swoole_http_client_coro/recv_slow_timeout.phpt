@@ -52,7 +52,7 @@ $pm->childFunc = function () use ($pm) {
                 for ($n = 0; $n < strlen($data); $n++) {
                     var_dump_return("send {$n}\n");
                     $client->send($data{$n});
-                    usleep(10 * 1000);
+                    usleep(800 * 1000);
                 }
             });
         }

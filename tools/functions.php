@@ -13,8 +13,7 @@ define('SWOOLE_COLOR_MAGENTA', 5);
 define('SWOOLE_COLOR_CYAN', 6);
 define('SWOOLE_COLOR_WHITE', 7);
 
-$_space = function(int $length = 4): string
-{
+$_space = function (int $length = 4): string {
     return str_repeat(' ', $length);
 };
 
@@ -24,9 +23,17 @@ function space(...$args): string
     return $_space(...$args);
 }
 
+function print_split_line(string $title = '', int $length = 32)
+{
+    if ($length % 2 !== 0) {
+        $length += 1;
+    }
+    echo "< {$title} > " . str_repeat('=', $length) . PHP_EOL;
+}
+
 function swoole_log(string $content, int $color = 0)
 {
-    echo ($color ? "\033[3{$color}m{$content}\033[0m" : $content) . "\n";
+    echo ($color ? "\033[3{$color}m{$content}\033[0m" : $content) . PHP_EOL;
 }
 
 function swoole_check(bool $is_ok, string $output)
@@ -72,17 +79,17 @@ function swoole_success(string $content)
 function swoole_execute_and_check(string $command)
 {
     $basename = pathinfo(explode(' ', $command)[1], PATHINFO_FILENAME);
-    echo "[{$basename}]\n";
-    echo "===========  Execute  ==============\n";
+    echo "[{$basename}]" . PHP_EOL;
+    echo "===========  Execute  ==============" . PHP_EOL;
     exec($command, $output, $return_var);
     if (substr($output[0] ?? '', 0, 2) === '#!') {
         array_shift($output);
     }
-    echo '> ' . implode("\n> ", $output) . "\n";
+    echo '> ' . implode("\n> ", $output) . "" . PHP_EOL;
     if ($return_var != 0) {
         swoole_error("Exec {$command} failed with code {$return_var}!");
     }
-    echo "=========== Finish Done ============\n\n";
+    echo "=========== Finish Done ============" . PHP_EOL . PHP_EOL;
 }
 
 function scan_dir(string $dir, callable $filter = null): array
@@ -104,7 +111,7 @@ function file_size(string $filename, int $decimals = 2)
 function swoole_git_files(): array
 {
     $root = SWOOLE_SOURCE_ROOT;
-    return explode("\n", `cd {$root} && git ls-files`);
+    return explode(PHP_EOL, `cd {$root} && git ls-files`);
 }
 
 function swoole_source_list(array $ext_list = [], array $excepts = []): array
