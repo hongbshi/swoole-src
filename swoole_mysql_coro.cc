@@ -1605,7 +1605,7 @@ static zend_object *swoole_mysql_coro_statement_create_object(zend_class_entry *
 
 static sw_inline void swoole_mysql_coro_sync_error_properties(zval *zobject, int error_code, const char *error_msg)
 {
-    SW_ASSERT(Z_OBJCE_P(zobject) == swoole_mysql_coro_ce_ptr || Z_OBJCE_P(zobject) == swoole_mysql_coro_statement_ce_ptr);
+    SW_ASSERT(instanceof_function(Z_OBJCE_P(zobject), swoole_mysql_coro_ce_ptr) || instanceof_function(Z_OBJCE_P(zobject), swoole_mysql_coro_statement_ce_ptr));
     zend_update_property_long(Z_OBJCE_P(zobject), zobject, ZEND_STRL("errno"), error_code);
     zend_update_property_string(Z_OBJCE_P(zobject), zobject, ZEND_STRL("error"), error_msg);
 }
