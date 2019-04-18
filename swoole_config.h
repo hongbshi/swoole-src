@@ -240,10 +240,6 @@
 #define SW_WEBSOCKET_KEY_LENGTH          16
 #define SW_WEBSOCKET_QUEUE_SIZE          16
 
-// TODO: should be removed (or move to async)
-#define SW_MYSQL_CONNECT_TIMEOUT         1.0
-#define SW_REDIS_CONNECT_TIMEOUT         1.0
-
 /**
  * MySQL Client
  */
