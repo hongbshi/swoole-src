@@ -41,7 +41,15 @@ class mysql_statement;
 class mysql_client
 {
 public:
+    /* {{{ session related */
     Socket *socket = nullptr;
+    Socket::timeout_controller *tc = nullptr;
+    enum sw_mysql_state state = SW_MYSQL_STATE_CLOSED;
+    bool quit = false;
+    bool more_results_exist = false;
+    mysql::result_info result;
+    /* }}} */
+
     std::string host = SW_MYSQL_DEFAULT_HOST;
     uint16_t port = SW_MYSQL_DEFAULT_PORT;
     bool ssl = false;
@@ -57,11 +65,8 @@ public:
     uint16_t error_code = 0;
     std::string error_msg = "";
 
-    enum sw_mysql_state state = SW_MYSQL_STATE_CLOSED;
-    bool more_results_exist = false;
-    mysql::result_info result;
-
     std::unordered_map<uint32_t, mysql_statement*> statements;
+    mysql_statement* statement = nullptr;
 
     inline void connection_error()
     {
@@ -105,7 +110,7 @@ public:
     {
         if (unlikely(socket && v))
         {
-            error_code = EINVAL;
+            error_code = ENOTSUP;
             error_msg = "can not use fetch mode after the connection is established";
             return false;
         }
@@ -130,11 +135,42 @@ public:
         return true;
     }
 
+    void add_timeout_controller(double timeout)
+    {
+        if (unlikely(!socket))
+        {
+            return;
+        }
+        if (timeout > 0)
+        {
+            tc = new Socket::timeout_controller(socket, timeout, SW_TIMEOUT_RDWR);
+        }
+    }
+
+    inline bool has_timedout(enum swTimeout_type type)
+    {
+        return tc && tc->has_timedout(type);
+    }
+
+    void del_timeout_controller()
+    {
+        if (tc)
+        {
+            delete tc;
+            tc = nullptr;
+        }
+    }
+
     bool connect(std::string host, uint16_t port, bool ssl);
 
     inline bool connect()
     {
         return connect(host, port, ssl);
+    }
+
+    inline bool is_connected()
+    {
+        return !!socket;
     }
 
     inline int get_fd()
@@ -156,6 +192,24 @@ public:
     inline bool is_writeable()
     {
         return socket && !socket->has_bound(SW_EVENT_WRITE);
+    }
+
+    inline bool is_available_for_new_reuqest()
+    {
+        if (unlikely(state != SW_MYSQL_STATE_IDLE))
+        {
+            if (!socket)
+            {
+                connection_error();
+            }
+            else
+            {
+                error_code = EINPROGRESS;
+                error_msg = "mysql client is busy now, please recv or fetch all unread data and try again";
+            }
+            return false;
+        }
+        return check_liveness();
     }
 
     const char* recv_length(size_t needle);
@@ -186,37 +240,44 @@ public:
         return data;
     }
 
-    inline bool send_raw(const char *data, size_t length, double timeout = 0)
+    inline bool send_raw(const char *data, size_t length)
     {
         if (unlikely(!socket))
         {
             connection_error();
             return false;
         }
-        // TODO: timeout_setter
-        if (unlikely(socket->send_all(data, length) != (ssize_t) length))
+        else
         {
-            io_error();
-            return false;
+            if (unlikely(has_timedout(SW_TIMEOUT_WRITE)))
+            {
+                io_error();
+                return false;
+            }
+            if (unlikely(socket->send_all(data, length) != (ssize_t ) length))
+            {
+                io_error();
+                return false;
+            }
+            return true;
         }
-        return true;
     }
 
     bool send_packet(mysql::client_packet *packet);
-    bool send_command(enum sw_mysql_command command, const char* sql = nullptr, size_t length = 0, double timeout = 0);
+    bool send_command(enum sw_mysql_command command, const char* sql = nullptr, size_t length = 0);
 
-    void query(zval *return_value, const char *statement, size_t statement_length, double timeout = 0);
+    void query(zval *return_value, const char *statement, size_t statement_length);
+    void send_query_request(zval *return_value, const char *statement, size_t statement_length);
     void recv_query_response(zval *return_value);
-    bool recv_fields();
     void fetch(zval *return_value);
     void fetch_all(zval *return_value);
     void next_result(zval *return_value);
-    bool recv(double timeout);
+    bool recv();
     bool begin();
     bool commit();
     bool rollback();
 
-    mysql_statement* prepare(const char *statement, size_t statement_length, double timeout = 0);
+    bool send_prepare_request(const char *statement, size_t statement_length);
     mysql_statement* recv_prepare_response();
 
     void close();
@@ -236,14 +297,34 @@ private:
 class mysql_statement
 {
 public:
-    mysql_client *client;
+    std::string statement;
     mysql::statement info;
     mysql::result_info result;
 
     uint16_t error_code = 0;
     std::string error_msg = "";
 
-    mysql_statement(mysql_client *client);
+    mysql_statement(mysql_client *client, const char *statement, size_t statement_length) :
+            client(client)
+    {
+        this->statement = std::string(statement, statement_length);
+    }
+
+    void add_timeout_controller(double timeout)
+    {
+        if (client)
+        {
+            client->add_timeout_controller(timeout);
+        }
+    }
+
+    void del_timeout_controller()
+    {
+        if (client)
+        {
+            client->del_timeout_controller();
+        }
+    }
 
     inline bool is_available()
     {
@@ -256,12 +337,14 @@ public:
         return true;
     }
 
-    inline bool is_available_for_new_query()
+    inline bool is_available_for_new_reuqest()
     {
-        if (unlikely(client->state != SW_MYSQL_STATE_IDLE))
+        if (unlikely(!is_available()))
         {
-            error_code = EINPROGRESS;
-            error_msg = "mysql client is busy now, please recv or fetch all unread data and try again";
+            return false;
+        }
+        if (unlikely(!client->is_available_for_new_reuqest()))
+        {
             return false;
         }
         return true;
@@ -294,10 +377,19 @@ public:
         close();
     }
 
+    bool prepare();
+    bool send_prepare_request();
+    bool recv_prepare_response();
+
     void execute(zval *return_value, zval *params);
+    void send_execute_request(zval *return_value, zval *params);
     void recv_execute_response(zval *return_value);
+
     void fetch(zval *return_value);
     void fetch_all(zval *return_value);
+
+private:
+    mysql_client *client = nullptr;
 };
 }
 
@@ -511,13 +603,24 @@ const char* mysql_client::recv_length(size_t needle)
     }
     else
     {
+        ssize_t retval;
         swString *buffer = socket->get_read_buffer();
-        off_t offset = buffer->offset; // save offset instead of buffer point (due to realloc)
-        size_t read_n = buffer->length - buffer->offset;
-
+        off_t offset; // save offset instead of buffer point (due to realloc)
+        size_t read_n; // readable bytes
+        if (buffer->offset != 0 && buffer->length == (size_t) buffer->offset)
+        {
+            buffer->length = buffer->offset = 0;
+        }
+        offset = buffer->offset;
+        read_n = buffer->length - buffer->offset;
         while (read_n < needle)
         {
-            ssize_t retval = socket->recv(buffer->str + buffer->length, buffer->size - buffer->length);
+            if (unlikely(has_timedout(SW_TIMEOUT_READ)))
+            {
+                io_error();
+                return nullptr;
+            }
+            retval = socket->recv(buffer->str + buffer->length, buffer->size - buffer->length);
             if (unlikely(retval <= 0))
             {
                 io_error();
@@ -587,40 +690,49 @@ bool mysql_client::send_packet(mysql::client_packet *packet)
     return false;
 }
 
-bool mysql_client::send_command(enum sw_mysql_command command, const char* sql, size_t length, double timeout)
+bool mysql_client::send_command(enum sw_mysql_command command, const char* sql, size_t length)
 {
     if (likely(SW_MYSQL_PACKET_HEADER_SIZE + 1 + length <= SwooleG.pagesize))
     {
         mysql::command_packet command_packet(command, sql, length);
-        return send_raw(command_packet.get_data(), command_packet.get_data_length(), timeout);
+        return send_raw(command_packet.get_data(), command_packet.get_data_length());
     }
     else
     {
         size_t send_s = MIN(length, SW_MYSQL_MAX_PACKET_BODY_SIZE - 1), send_n = send_s, number = 0;
         mysql::command_packet command_packet(command);
         command_packet.set_header(1 + send_s, number++);
-        // TODO: timeout controller
-        if (unlikely(
-            !send_raw(command_packet.get_data(), SW_MYSQL_PACKET_HEADER_SIZE + 1)) ||
-            !send_raw(sql, send_s)
-        )
+
+        if (unlikely(!socket))
         {
+            connection_error();
             return false;
         }
-        while (send_n < length)
+        else
         {
-            send_s = MIN(length - send_n, SW_MYSQL_MAX_PACKET_BODY_SIZE);
-            command_packet.set_header(send_s, number++);
+            /** Notice: For the first send, the timeout parameter is unnecessary */
             if (unlikely(
-                !send_raw(command_packet.get_data(), SW_MYSQL_PACKET_HEADER_SIZE)) ||
-                !send_raw(sql + send_n, send_s)
+                !send_raw(command_packet.get_data(), SW_MYSQL_PACKET_HEADER_SIZE + 1)) ||
+                !send_raw(sql, send_s)
             )
             {
                 return false;
             }
-            send_n += send_s;
+            while (send_n < length)
+            {
+                send_s = MIN(length - send_n, SW_MYSQL_MAX_PACKET_BODY_SIZE);
+                command_packet.set_header(send_s, number++);
+                if (unlikely(
+                    !send_raw(command_packet.get_data(), SW_MYSQL_PACKET_HEADER_SIZE)) ||
+                    !send_raw(sql + send_n, send_s)
+                )
+                {
+                    return false;
+                }
+                send_n += send_s;
+            }
+            return true;
         }
-        return true;
     }
 }
 
@@ -719,44 +831,49 @@ bool mysql_client::handshake()
     return true;
 }
 
-void mysql_client::query(zval *return_value, const char *statement, size_t statement_length, double timeout)
+void mysql_client::query(zval *return_value, const char *statement, size_t statement_length)
 {
-    if (unlikely(!check_liveness()))
+    send_query_request(return_value, statement, statement_length);
+    if (EXPECTED(!defer && Z_TYPE_P(return_value) == IS_TRUE))
+    {
+        recv_query_response(return_value);
+    }
+}
+
+void mysql_client::send_query_request(zval *return_value, const char *statement, size_t statement_length)
+{
+    if (unlikely(!is_available_for_new_reuqest()))
     {
         RETURN_FALSE;
     }
-    if (unlikely(!send_command(SW_MYSQL_COM_QUERY, statement, statement_length, timeout)))
+    if (unlikely(!send_command(SW_MYSQL_COM_QUERY, statement, statement_length)))
     {
         RETURN_FALSE;
     }
     state = SW_MYSQL_STATE_QUERY;
-    if (defer)
-    {
-        RETURN_TRUE;
-    }
-    recv_query_response(return_value);
+    RETURN_TRUE;
 };
 
-bool mysql_client::recv_fields()
+void mysql_client::recv_query_response(zval *return_value)
 {
     const char *data;
     if (unlikely(!(data = recv_none_error_packet())))
     {
-        return false;
+        RETURN_FALSE;
     }
     if (mysql::server_packet::is_ok(data))
     {
         mysql::ok_packet ok_packet(data);
         result.ok = ok_packet;
         state = ok_packet.server_status.more_results_exists() ? SW_MYSQL_STATE_MORE_RESULTS : SW_MYSQL_STATE_IDLE;
-        return true;
+        RETURN_TRUE;
     }
     mysql::lcb_packet lcb_packet(data);
     if (unlikely(lcb_packet.length == 0))
     {
         // is it possible?
         proto_error(data, SW_MYSQL_PACKET_FIELD);
-        return false;
+        RETURN_FALSE;
     }
     // loop fields
     result.alloc_fields(lcb_packet.length);
@@ -764,27 +881,17 @@ bool mysql_client::recv_fields()
     {
         if (unlikely(!(data = recv_packet())))
         {
-            return false;
+            RETURN_FALSE;
         }
         result.set_field(i, data);
     }
     // expect eof
     if (unlikely(!(data = recv_eof_packet())))
     {
-        return false;
-    }
-    state = SW_MYSQL_STATE_QUERY_FETCH;
-    return true;
-}
-
-void mysql_client::recv_query_response(zval *return_value)
-{
-    if (unlikely(!recv_fields()))
-    {
         RETURN_FALSE;
     }
-    // ok packet
-    if (state == SW_MYSQL_STATE_IDLE || get_fetch_mode())
+    state = SW_MYSQL_STATE_QUERY_FETCH;
+    if (get_fetch_mode())
     {
         RETURN_TRUE;
     }
@@ -1013,31 +1120,26 @@ void mysql_client::next_result(zval *return_value)
     RETURN_NULL();
 }
 
-mysql_statement* mysql_client::prepare(const char *statement, size_t statement_length, double timeout)
+bool mysql_client::send_prepare_request(const char *statement, size_t statement_length)
 {
-    if (unlikely(!check_liveness()))
+    this->statement = new mysql_statement(this, statement, statement_length);
+    if (unlikely(!this->statement->send_prepare_request()))
     {
-        return nullptr;
+        delete this->statement;
+        this->statement = nullptr;
+        return false;
     }
-    if (unlikely(!send_command(SW_MYSQL_COM_STMT_PREPARE, statement, statement_length, timeout)))
-    {
-        return nullptr;
-    }
-    state = SW_MYSQL_STATE_PREPARE;
-    if (defer)
-    {
-        return (mysql_statement *) -1;
-    }
-    return recv_prepare_response();
+    return true;
 }
 
 mysql_statement* mysql_client::recv_prepare_response()
 {
     if (likely(state == SW_MYSQL_STATE_PREPARE))
     {
-        state = SW_MYSQL_STATE_IDLE; // or will be replaced by constructor
-        mysql_statement* statement = new mysql_statement(this);
-        if (unlikely(!statement->is_available()))
+        mysql_statement *statement = this->statement;
+        SW_ASSERT(statement != nullptr);
+        this->statement = nullptr;
+        if (unlikely(!statement->recv_prepare_response()))
         {
             delete statement;
             return nullptr;
@@ -1053,32 +1155,73 @@ void mysql_client::close()
     Socket *socket = this->socket;
     if (socket)
     {
-        // make statements non-available
-        while (!statements.empty())
+        del_timeout_controller();
+        if (likely(!quit && !socket->has_bound(SW_EVENT_WRITE)))
         {
-            auto i = statements.begin();
-            i->second->close(false);
-            statements.erase(i);
+            quit = true;
+            send_command(SW_MYSQL_COM_QUIT);
         }
         if (likely(!socket->has_bound()))
         {
-            send_command(SW_MYSQL_COM_QUIT);
+            // make statements non-available
+            while (!statements.empty())
+            {
+                auto i = statements.begin();
+                i->second->close(false);
+                statements.erase(i);
+            }
             this->socket = nullptr;
         }
         if (likely(socket->close()))
         {
-            // FIXME: merge master // delete socket;
+            delete socket;
         }
     }
     state = SW_MYSQL_STATE_CLOSED;
+    quit = false;
 }
 
-mysql_statement::mysql_statement(mysql_client *client)
+bool mysql_statement::prepare()
 {
+    if (unlikely(!send_prepare_request()))
+    {
+        return false;
+    }
+    if (client->get_defer())
+    {
+        return true;
+    }
+    return recv_prepare_response();
+}
+
+bool mysql_statement::send_prepare_request()
+{
+    if (unlikely(!is_available_for_new_reuqest()))
+    {
+        return false;
+    }
+    if (unlikely(!client->send_command(SW_MYSQL_COM_STMT_PREPARE, statement.c_str(), statement.length())))
+    {
+        return false;
+    }
+    client->state = SW_MYSQL_STATE_PREPARE;
+    return true;
+}
+
+bool mysql_statement::recv_prepare_response()
+{
+    if (unlikely(!is_available()))
+    {
+        return false;
+    }
+    else
+    {
+        client->state = SW_MYSQL_STATE_IDLE;
+    }
     const char *data;
     if (unlikely(!(data = client->recv_none_error_packet())))
     {
-        return;
+        return false;
     }
     info = mysql::statement(data);
     if (likely(info.param_count != 0))
@@ -1087,7 +1230,7 @@ mysql_statement::mysql_statement(mysql_client *client)
         {
             if (unlikely(!(data = client->recv_packet())))
             {
-                return;
+                return false;
             }
     #ifdef SW_LOG_TRACE_OPEN
             mysql::param_packet param_packet(data);
@@ -1095,7 +1238,7 @@ mysql_statement::mysql_statement(mysql_client *client)
         }
         if (unlikely(!(data = client->recv_eof_packet())))
         {
-            return;
+            return false;
         }
     }
     if (info.field_count != 0)
@@ -1105,21 +1248,30 @@ mysql_statement::mysql_statement(mysql_client *client)
         {
             if (unlikely(!(data = client->recv_packet())))
             {
-                return;
+                return false;
             }
             result.set_field(i, data);
         }
         if (unlikely(!(data = client->recv_eof_packet())))
         {
-            return;
+            return false;
         }
     }
-    this->client = client;
+    return true;
 }
 
 void mysql_statement::execute(zval *return_value, zval *params)
 {
-    if (unlikely(!is_available()))
+    send_execute_request(return_value, params);
+    if (EXPECTED(!client->get_defer() && Z_TYPE_P(return_value) == IS_TRUE))
+    {
+        recv_execute_response(return_value);
+    }
+}
+
+void mysql_statement::send_execute_request(zval *return_value, zval *params)
+{
+    if (unlikely(!is_available_for_new_reuqest()))
     {
         RETURN_FALSE;
     }
@@ -1222,11 +1374,7 @@ void mysql_statement::execute(zval *return_value, zval *params)
         RETURN_FALSE;
     }
     client->state = SW_MYSQL_STATE_EXECUTE;
-    if (client->get_defer())
-    {
-        RETURN_TRUE;
-    }
-    recv_execute_response(return_value);
+    RETURN_TRUE;
 }
 
 void mysql_statement::recv_execute_response(zval *return_value)
@@ -1422,7 +1570,6 @@ void mysql_statement::fetch(zval *return_value)
                     swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%d", field->name_length, field->name, row.stiny);
                 }
                 break;
-
             case SW_MYSQL_TYPE_SHORT:
                 if (field->flags & SW_MYSQL_UNSIGNED_FLAG)
                 {
@@ -1439,7 +1586,6 @@ void mysql_statement::fetch(zval *return_value)
                     swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%d", field->name_length, field->name, row.ssmall);
                 }
                 break;
-
             case SW_MYSQL_TYPE_INT24:
             case SW_MYSQL_TYPE_LONG:
                 if (field->flags & SW_MYSQL_UNSIGNED_FLAG)
@@ -1457,7 +1603,6 @@ void mysql_statement::fetch(zval *return_value)
                     swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%d", field->name_length, field->name, row.sint);
                 }
                 break;
-
             case SW_MYSQL_TYPE_LONGLONG:
                 if (field->flags & SW_MYSQL_UNSIGNED_FLAG)
                 {
@@ -1548,7 +1693,7 @@ static zend_object *swoole_mysql_coro_create_object(zend_class_entry *ce)
     zend_object_std_init(&mc_t->std, ce);
     object_properties_init(&mc_t->std, ce);
     mc_t->std.handlers = &swoole_mysql_coro_handlers;
-    mc_t->mc = new mysql_client();
+    mc_t->mc = new mysql_client;
     return &mc_t->std;
 }
 
@@ -1572,43 +1717,39 @@ static void swoole_mysql_coro_statement_free_object(zend_object *object)
     zend_object_std_dtor(&mstmt_t->std);
 }
 
-static sw_inline zend_object *swoole_mysql_coro_statement_create_object(zend_class_entry *ce, mysql_statement *statement)
+static sw_inline zend_object* swoole_mysql_coro_statement_create_object(zend_class_entry *ce, mysql_statement *statement)
 {
+    zval zobject;
     mysql_coro_statement_t *mstmt_t = (mysql_coro_statement_t *) ecalloc(1, sizeof(mysql_coro_statement_t) + zend_object_properties_size(ce));
     zend_object_std_init(&mstmt_t->std, ce);
     object_properties_init(&mstmt_t->std, ce);
     mstmt_t->std.handlers = &swoole_mysql_coro_statement_handlers;
-    if (UNEXPECTED(!statement))
-    {
-        swoole_php_fatal_error(E_ERROR, "you must create mysql statement object by prepare method");
-        return nullptr;
-    }
-    else
-    {
-        SW_ASSERT(statement != (mysql_statement * ) -1); // for defer mode
-        zval zobject;
-        ZVAL_OBJ(&zobject, &mstmt_t->std);
-        zend_update_property_long(ce, &zobject, ZEND_STRL("id"), statement->info.id);
-        mstmt_t->statement = statement;
-    }
+    ZVAL_OBJ(&zobject, &mstmt_t->std);
+    zend_update_property_long(ce, &zobject, ZEND_STRL("id"), statement->info.id);
+    mstmt_t->statement = statement;
     return &mstmt_t->std;
 }
 
-static sw_inline zend_object *swoole_mysql_coro_statement_create_object(mysql_statement *statement)
+static sw_inline zend_object* swoole_mysql_coro_statement_create_object(mysql_statement *statement)
 {
     return swoole_mysql_coro_statement_create_object(swoole_mysql_coro_statement_ce, statement);
 }
 
-static zend_object *swoole_mysql_coro_statement_create_object(zend_class_entry *ce)
+static zend_object* swoole_mysql_coro_statement_create_object(zend_class_entry *ce)
 {
-    return swoole_mysql_coro_statement_create_object(ce, nullptr);
+    swoole_php_fatal_error(E_ERROR, "you must create mysql statement object by prepare method");
+    return nullptr;
 }
 
-static sw_inline void swoole_mysql_coro_sync_error_properties(zval *zobject, int error_code, const char *error_msg)
+static sw_inline void swoole_mysql_coro_sync_error_properties(zval *zobject, int error_code, const char *error_msg, bool connected = true)
 {
     SW_ASSERT(instanceof_function(Z_OBJCE_P(zobject), swoole_mysql_coro_ce) || instanceof_function(Z_OBJCE_P(zobject), swoole_mysql_coro_statement_ce));
     zend_update_property_long(Z_OBJCE_P(zobject), zobject, ZEND_STRL("errno"), error_code);
     zend_update_property_string(Z_OBJCE_P(zobject), zobject, ZEND_STRL("error"), error_msg);
+    if (!connected)
+    {
+        zend_update_property_bool(Z_OBJCE_P(zobject), zobject, ZEND_STRL("connected"), connected);
+    }
 }
 
 static sw_inline void swoole_mysql_coro_sync_result_properties(zval *zobject, zend_long affect_rows, zend_long last_insert_id)
@@ -1768,7 +1909,7 @@ static PHP_METHOD(swoole_mysql_coro, setDefer)
     mysql_client *mc = swoole_get_mysql_client(getThis());
     zend_bool defer = 1;
 
-    ZEND_PARSE_PARAMETERS_START(1, 1)
+    ZEND_PARSE_PARAMETERS_START(0, 1)
         Z_PARAM_BOOL(defer)
     ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
@@ -1776,6 +1917,7 @@ static PHP_METHOD(swoole_mysql_coro, setDefer)
     if (UNEXPECTED(!ret))
     {
         swoole_php_fatal_error(E_WARNING, "%s", mc->error_msg.c_str());
+        swoole_mysql_coro_sync_error_properties(getThis(), mc->error_code, mc->error_msg.c_str(), mc->is_connected());
     }
     RETURN_BOOL(ret);
 }
@@ -1793,10 +1935,12 @@ static PHP_METHOD(swoole_mysql_coro, query)
         Z_PARAM_DOUBLE(timeout)
     ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
-    mc->query(return_value, sql, sql_length, timeout);
+    mc->add_timeout_controller(timeout);
+    mc->query(return_value, sql, sql_length);
+    mc->del_timeout_controller();
     if (UNEXPECTED(Z_TYPE_P(return_value) == IS_FALSE))
     {
-        swoole_mysql_coro_sync_error_properties(getThis(), mc->error_code, mc->error_msg.c_str());
+        swoole_mysql_coro_sync_error_properties(getThis(), mc->error_code, mc->error_msg.c_str(), mc->is_connected());
     }
 }
 
@@ -1804,12 +1948,20 @@ static PHP_METHOD(swoole_mysql_coro, fetch)
 {
     mysql_client *mc = swoole_get_mysql_client(getThis());
     mc->fetch(return_value);
+    if (unlikely(Z_TYPE_P(return_value) == IS_FALSE))
+    {
+        swoole_mysql_coro_sync_error_properties(getThis(), mc->error_code, mc->error_msg.c_str(), mc->is_connected());
+    }
 }
 
 static PHP_METHOD(swoole_mysql_coro, fetchAll)
 {
     mysql_client *mc = swoole_get_mysql_client(getThis());
     mc->fetch_all(return_value);
+    if (unlikely(Z_TYPE_P(return_value) == IS_FALSE))
+    {
+        swoole_mysql_coro_sync_error_properties(getThis(), mc->error_code, mc->error_msg.c_str(), mc->is_connected());
+    }
 }
 
 static PHP_METHOD(swoole_mysql_coro, nextResult)
@@ -1831,40 +1983,61 @@ static PHP_METHOD(swoole_mysql_coro, prepare)
         Z_PARAM_DOUBLE(timeout)
     ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
-    mysql_statement *statement_object = mc->prepare(statement, statement_length, timeout);
-    if (UNEXPECTED(!statement_object))
+    mc->add_timeout_controller(timeout);
+    if (unlikely(!mc->send_prepare_request(statement, statement_length)))
     {
-        RETURN_FALSE;
+        RETVAL_FALSE;
     }
-    if (mc->state == SW_MYSQL_STATE_PREPARE)
+    else if (mc->get_defer())
     {
-        RETURN_TRUE;
+        RETVAL_TRUE;
     }
-    RETURN_OBJ(swoole_mysql_coro_statement_create_object(statement_object));
+    else
+    {
+        mysql_statement* statement = mc->recv_prepare_response();
+        if (UNEXPECTED(!statement))
+        {
+            RETVAL_FALSE;
+        }
+        RETVAL_OBJ(swoole_mysql_coro_statement_create_object(statement));
+    }
+    mc->del_timeout_controller();
 }
 
 static PHP_METHOD(swoole_mysql_coro, recv)
 {
+    double timeout = 0;
+
+    ZEND_PARSE_PARAMETERS_START(0, 1)
+        Z_PARAM_DOUBLE(timeout)
+    ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
+
     mysql_client *mc = swoole_get_mysql_client(getThis());
+
+    mc->add_timeout_controller(timeout);
     switch(mc->state)
     {
     case SW_MYSQL_STATE_QUERY:
         mc->recv_query_response(return_value);
-        return;
+        break;
     case SW_MYSQL_STATE_PREPARE:
     {
-        mysql_statement *statement_object = mc->recv_prepare_response();
-        if (UNEXPECTED(!statement_object))
+        mysql_statement *statement = mc->recv_prepare_response();
+        if (UNEXPECTED(!statement))
         {
-            RETURN_FALSE;
+            RETVAL_FALSE;
         }
-        RETURN_OBJ(swoole_mysql_coro_statement_create_object(statement_object));
-        break; // for ide
+        else
+        {
+            RETVAL_OBJ(swoole_mysql_coro_statement_create_object(statement));
+        }
+        break;
     }
     default:
         swoole_mysql_coro_sync_error_properties(getThis(), ENOMSG, "no message to receive");
-        RETURN_FALSE;
+        RETVAL_FALSE;
     }
+    mc->del_timeout_controller();
 }
 
 static void swoole_mysql_coro_query_transcation(INTERNAL_FUNCTION_PARAMETERS, const char* command, size_t command_length)
@@ -1872,7 +2045,8 @@ static void swoole_mysql_coro_query_transcation(INTERNAL_FUNCTION_PARAMETERS, co
     mysql_client *mc = swoole_get_mysql_client(getThis());
     if (UNEXPECTED(mc->get_defer()))
     {
-        swoole_php_fatal_error(E_WARNING, "you should not query transaction when defer mode is on, if you want, please use `query` instead.");
+        swoole_php_fatal_error(E_WARNING, "you should not query transaction when defer mode is on, if you want, please use `query('%s')` instead", command);
+        RETURN_FALSE;
     }
     mc->query(return_value, command, command_length);
 }
@@ -1909,19 +2083,19 @@ static PHP_METHOD(swoole_mysql_coro, escape)
     char *newstr = (char *) safe_emalloc(2, str_length + 1, 1);
     if (!newstr)
     {
-        swoole_php_fatal_error(E_ERROR, "emalloc(%ld) failed.", str_length + 1);
+        swoole_php_fatal_error(E_ERROR, "emalloc(%ld) failed", str_length + 1);
         RETURN_FALSE;
     }
     const MYSQLND_CHARSET* cset = mysqlnd_find_charset_nr(mc->charset);
     if (!cset)
     {
-        swoole_php_fatal_error(E_ERROR, "unknown mysql charset[%d].", mc->charset);
+        swoole_php_fatal_error(E_ERROR, "unknown mysql charset[%d]", mc->charset);
         RETURN_FALSE;
     }
     zend_ulong newstr_len = mysqlnd_cset_escape_slashes(cset, newstr, str, str_length);
     if (newstr_len == (zend_ulong) ~0)
     {
-        swoole_php_fatal_error(E_ERROR, "mysqlnd_cset_escape_slashes() failed.");
+        swoole_php_fatal_error(E_ERROR, "mysqlnd_cset_escape_slashes() failed");
         RETURN_FALSE;
     }
     RETVAL_STRINGL(newstr, newstr_len);
@@ -1950,6 +2124,7 @@ static PHP_METHOD(swoole_mysql_coro_statement, execute)
         Z_PARAM_DOUBLE(timeout)
     ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
+    statement->add_timeout_controller(timeout);
     statement->execute(return_value, params);
     switch(Z_TYPE_P(return_value))
     {
@@ -1960,18 +2135,31 @@ static PHP_METHOD(swoole_mysql_coro_statement, execute)
         break;
     }
     case IS_FALSE:
+    {
         swoole_mysql_coro_sync_error_properties(getThis(), statement->error_code, statement->error_msg.c_str());
         break;
     }
+    default:
+        break;
+    }
+    statement->del_timeout_controller();
 }
 
 static PHP_METHOD(swoole_mysql_coro_statement, fetch)
 {
-    mysql_statement *statement = swoole_get_mysql_statement(getThis());
+    // mysql_statement *statement = swoole_get_mysql_statement(getThis());
+//    if (unlikely(Z_TYPE_P(return_value) == IS_FALSE))
+//    {
+//        swoole_mysql_coro_sync_error_properties(getThis(), mc->error_code, mc->error_msg.c_str(), mc->is_connected());
+//    }
 }
 
 static PHP_METHOD(swoole_mysql_coro_statement, fetchAll)
 {
+//    if (unlikely(Z_TYPE_P(return_value) == IS_FALSE))
+//    {
+//        swoole_mysql_coro_sync_error_properties(getThis(), mc->error_code, mc->error_msg.c_str(), mc->is_connected());
+//    }
 }
 
 static PHP_METHOD(swoole_mysql_coro_statement, nextResult)
