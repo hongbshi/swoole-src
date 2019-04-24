@@ -193,8 +193,16 @@ typedef unsigned long ulong_t;
 
 #ifdef SW_DEBUG
 #define SW_ASSERT(e)           assert(e)
+#define SW_ASSERT_1BYTE(v)     do { \
+    size_t i = 0, n = 0; \
+    for (; i < sizeof(v); i++) { \
+        n += ((v >> i) & 1) ? 1 : 0; \
+    } \
+    assert(n == 1); \
+} while (0)
 #else
 #define SW_ASSERT(e)
+#define SW_ASSERT_1BYTE(v)
 #endif
 #define SW_START_SLEEP         usleep(100000)  //sleep 1s,wait fork and pthread_create
 
@@ -1258,6 +1266,9 @@ void swLog_free(void);
 uint64_t swoole_hash_key(char *str, int str_len);
 uint32_t swoole_common_multiple(uint32_t u, uint32_t v);
 uint32_t swoole_common_divisor(uint32_t u, uint32_t v);
+
+extern void swoole_sha1(const char *str, int _len, unsigned char *digest);
+extern void swoole_sha256(const char *str, int _len, unsigned char *digest);
 
 static sw_inline uint16_t swoole_swap_endian16(uint16_t x)
 {

@@ -10,6 +10,10 @@
 using namespace swoole;
 using namespace std;
 
+enum swTimeout_type swTimeout_type_list[3] = {
+    SW_TIMEOUT_CONNECT, SW_TIMEOUT_READ, SW_TIMEOUT_WRITE
+};
+
 double Socket::default_connect_timeout = SW_DEFAULT_SOCKET_CONNECT_TIMEOUT;
 double Socket::default_read_timeout    = SW_DEFAULT_SOCKET_READ_TIMEOUT;
 double Socket::default_write_timeout   = SW_DEFAULT_SOCKET_WRITE_TIMEOUT;
@@ -1578,6 +1582,11 @@ bool Socket::shutdown(int __how)
  */
 bool Socket::close()
 {
+    if (socket->fd < 0)
+    {
+        set_err(EBADF);
+        return true;
+    }
     if (unlikely(has_bound()))
     {
         if (socket->closed)
