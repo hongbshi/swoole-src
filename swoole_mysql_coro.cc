@@ -48,6 +48,8 @@ public:
     bool quit = false;
     bool more_results_exist = false;
     mysql::result_info result;
+    std::unordered_map<uint32_t, mysql_statement*> statements;
+    mysql_statement* statement = nullptr;
     /* }}} */
 
     std::string host = SW_MYSQL_DEFAULT_HOST;
@@ -64,9 +66,6 @@ public:
 
     uint16_t error_code = 0;
     std::string error_msg = "";
-
-    std::unordered_map<uint32_t, mysql_statement*> statements;
-    mysql_statement* statement = nullptr;
 
     inline void connection_error()
     {
@@ -293,14 +292,27 @@ public:
 
     void close();
 
+    inline bool get_deletable_and_sign()
+    {
+        waiting_for_deletion = true;
+        return statements.empty();
+    }
+
+    inline bool should_be_deleted_by_statement()
+    {
+        return waiting_for_deletion && statements.empty();
+    }
+
     ~mysql_client()
     {
+        SW_ASSERT(statements.empty());
         close();
     }
 
 private:
     bool fetch_mode = false;
     bool defer = false;
+    bool waiting_for_deletion = false;
 
     bool handshake();
 };
@@ -312,29 +324,36 @@ public:
     mysql::statement info;
     mysql::result_info result;
 
-    uint16_t error_code = 0;
-    std::string error_msg = "";
-
     mysql_statement(mysql_client *client, const char *statement, size_t statement_length) :
             client(client)
     {
         this->statement = std::string(statement, statement_length);
     }
 
-    void add_timeout_controller(double timeout, const enum swTimeout_type type)
+    inline void add_timeout_controller(double timeout, const enum swTimeout_type type)
     {
-        if (client)
+        if (likely(client))
         {
             client->add_timeout_controller(timeout, type);
         }
     }
 
-    void del_timeout_controller()
+    inline void del_timeout_controller()
     {
-        if (client)
+        if (likely(client))
         {
             client->del_timeout_controller();
         }
+    }
+
+    inline uint16_t get_error_code()
+    {
+        return likely(client) ? client->error_code : error_code;
+    }
+
+    inline const char* get_error_msg()
+    {
+        return likely(client) ? client->error_msg.c_str() : error_msg.c_str();
     }
 
     inline bool is_available()
@@ -361,7 +380,7 @@ public:
         return true;
     }
 
-    // [notify = false]: connection is closed
+    // [notify = false]: mysql_client actively close
     inline void close(const bool notify = true)
     {
         if (client)
@@ -376,10 +395,17 @@ public:
                     client->send_command(SW_MYSQL_COM_STMT_CLOSE, id, sizeof(id));
                 }
                 client->statements.erase(info.id);
+                if (client->should_be_deleted_by_statement())
+                {
+                    delete client;
+                }
+            }
+            else
+            {
+                error_code = client->error_code;
+                error_msg = client->error_msg;
             }
             client = nullptr;
-            error_code = ECONNRESET;
-            error_msg = strerror(ECONNRESET);
         }
     }
 
@@ -401,6 +427,8 @@ public:
 
 private:
     mysql_client *client = nullptr;
+    uint16_t error_code = 0;
+    std::string error_msg;
 };
 }
 
@@ -1282,8 +1310,8 @@ void mysql_statement::send_execute_request(zval *return_value, zval *params)
 
     if (param_count != info.param_count)
     {
-        error_code = EINVAL;
-        error_msg = cpp_string::format("statement#%u expects %u parameter, %u given.", info.id, info.param_count, param_count);
+        client->error_code = EINVAL;
+        client->error_msg = cpp_string::format("statement#%u expects %u parameter, %u given.", info.id, info.param_count, param_count);
         RETURN_FALSE;
     }
 
@@ -1683,7 +1711,10 @@ static sw_inline mysql_client* swoole_get_mysql_client(zval *zobject)
 static void swoole_mysql_coro_free_object(zend_object *object)
 {
     mysql_coro_t *mc_t = swoole_mysql_coro_fetch_object(object);
-    delete mc_t->mc;
+    if (mc_t->mc->get_deletable_and_sign())
+    {
+        delete mc_t->mc;
+    }
     zend_object_std_dtor(&mc_t->std);
 }
 
@@ -2122,7 +2153,7 @@ static PHP_METHOD(swoole_mysql_coro_statement, execute)
 
     ZEND_PARSE_PARAMETERS_START(0, 2)
         Z_PARAM_OPTIONAL
-        Z_PARAM_ARRAY(params)
+        Z_PARAM_ARRAY_EX(params, 1, 0)
         Z_PARAM_DOUBLE(timeout)
     ZEND_PARSE_PARAMETERS_END_EX(RETURN_FALSE);
 
@@ -2138,7 +2169,7 @@ static PHP_METHOD(swoole_mysql_coro_statement, execute)
     }
     case IS_FALSE:
     {
-        swoole_mysql_coro_sync_error_properties(getThis(), statement->error_code, statement->error_msg.c_str());
+        swoole_mysql_coro_sync_error_properties(getThis(), statement->get_error_code(), statement->get_error_msg());
         break;
     }
     default:
