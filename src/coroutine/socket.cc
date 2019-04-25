@@ -667,7 +667,7 @@ bool Socket::connect(string _host, int _port, int flags)
                 host = Coroutine::gethostbyname(host, AF_INET, connect_timeout);
                 if (host.empty())
                 {
-                    set_err(SwooleG.error);
+                    set_err(SwooleG.error, hstrerror(SwooleG.error));
                     return false;
                 }
                 continue;
