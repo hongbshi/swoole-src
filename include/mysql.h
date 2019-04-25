@@ -328,6 +328,7 @@ enum sw_mysql_server_status_flags
 
 #if 1
 #define swMysqlPacketDump(_length, _number, data, title) \
+if (SW_LOG_TRACE >= SwooleG.log_level && (SW_TRACE_MYSQL_CLIENT & SwooleG.trace_flags)) \
     do { \
         uint32_t length = _length; \
         uint8_t number = _number; \
