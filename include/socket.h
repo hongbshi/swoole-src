@@ -38,7 +38,9 @@ enum swTimeout_type
     SW_TIMEOUT_ALL          =  0xff,
 };
 
-static enum swTimeout_type swTimeout_type_list[3];
+static constexpr enum swTimeout_type swTimeout_type_list[3] = {
+    SW_TIMEOUT_CONNECT, SW_TIMEOUT_READ, SW_TIMEOUT_WRITE
+};
 
 class Socket
 {
@@ -364,7 +366,7 @@ public:
             {
                 return;
             }
-            for (uint8_t i = 0; i < sizeof(swTimeout_type_list); i++)
+            for (uint8_t i = 0; i < SW_ARRAY_SIZE(swTimeout_type_list); i++)
             {
                 if (type & swTimeout_type_list[i])
                 {
@@ -382,7 +384,7 @@ public:
             {
                 return;
             }
-            for (uint8_t i = 0; i < sizeof(swTimeout_type_list); i++)
+            for (uint8_t i = 0; i < SW_ARRAY_SIZE(swTimeout_type_list); i++)
             {
                 if (type & swTimeout_type_list[i])
                 {

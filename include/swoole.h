@@ -207,6 +207,10 @@ typedef unsigned long ulong_t;
 #define SW_START_SLEEP         usleep(100000)  //sleep 1s,wait fork and pthread_create
 
 /*-----------------------------------Memory------------------------------------*/
+
+// Evaluates to the number of elements in 'array'
+#define SW_ARRAY_SIZE(array) (sizeof(array) / sizeof(array[0]))
+
 #define SW_DEFAULT_ALIGNMENT   sizeof(unsigned long)
 #define SW_MEM_ALIGNED_SIZE(size) \
         SW_MEM_ALIGNED_SIZE_EX(size, SW_DEFAULT_ALIGNMENT)
