@@ -217,7 +217,7 @@ public:
         {
             /* without unread data */
             swString *buffer = socket->get_read_buffer();
-            SW_ASSERT(buffer->length == buffer->offset);
+            SW_ASSERT(buffer->length == (size_t) buffer->offset);
             swString_clear(buffer);
             return true;
         }
@@ -607,9 +607,9 @@ bool mysql_client::connect(std::string host, uint16_t port, bool ssl)
     return true;
 }
 
-const char* mysql_client::recv_length(size_t needle)
+const char* mysql_client::recv_length(size_t need_length)
 {
-    if (unlikely(!socket))
+    if (unlikely(!is_connect()))
     {
         connection_error();
         return nullptr;
@@ -618,15 +618,9 @@ const char* mysql_client::recv_length(size_t needle)
     {
         ssize_t retval;
         swString *buffer = socket->get_read_buffer();
-        off_t offset; // save offset instead of buffer point (due to realloc)
-        size_t read_n; // readable bytes
-        if (buffer->offset != 0 && buffer->length == (size_t) buffer->offset)
-        {
-            buffer->length = buffer->offset = 0;
-        }
-        offset = buffer->offset;
-        read_n = buffer->length - buffer->offset;
-        while (read_n < needle)
+        off_t offset = buffer->offset; // save offset instead of buffer point (due to realloc)
+        size_t read_n = buffer->length - buffer->offset; // readable bytes
+        while (read_n < need_length)
         {
             if (unlikely(has_timedout(SW_TIMEOUT_READ)))
             {
@@ -643,7 +637,8 @@ const char* mysql_client::recv_length(size_t needle)
             buffer->length += retval;
             if (unlikely(buffer->length == buffer->size))
             {
-                if (unlikely(swString_extend_align(buffer, buffer->length + read_n) != SW_OK))
+                /* offset + need_length = new size (min) */
+                if (unlikely(swString_extend_align(buffer, offset + need_length) != SW_OK))
                 {
                     error_code = ENOMEM;
                     error_msg = strerror(ENOMEM);
@@ -655,7 +650,7 @@ const char* mysql_client::recv_length(size_t needle)
                 }
             }
         }
-        buffer->offset += needle;
+        buffer->offset += need_length;
         return buffer->str + offset;
     }
 }
@@ -671,11 +666,12 @@ const char* mysql_client::recv_packet()
     }
     length = mysql::server_packet::get_length(p);
     swTraceLog(SW_TRACE_MYSQL_CLIENT, "recv packet length=%u, number=%u", length, mysql::server_packet::get_number(p));
-    if (unlikely(!recv_length(length)))
+    p = recv_length(length);
+    if (unlikely(!p))
     {
         return nullptr;
     }
-    return p;
+    return p - SW_MYSQL_PACKET_HEADER_SIZE;
 }
 
 //const char* mysql_client::recv_text_data()
