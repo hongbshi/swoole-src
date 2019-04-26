@@ -204,6 +204,7 @@ public:
 
     inline bool is_available_for_new_reuqest()
     {
+        // TODO: support clear or save result here
         if (unlikely(state != SW_MYSQL_STATE_IDLE && state != SW_MYSQL_STATE_CLOSED))
         {
             error_code = EINPROGRESS;
@@ -948,7 +949,7 @@ void mysql_client::fetch(zval *return_value)
         {
             mysql::field_packet *field = result.get_field(i);
             mysql::row_data_text row_data_text(&p);
-            // handle big data
+            // TODO: handle big data
 //            do {
 //                // packet eof addr - row_data_text.body (reaminning size)
 //                size_t write_s = p_eof - row_data_text.body;
@@ -1321,6 +1322,7 @@ void mysql_statement::send_execute_request(zval *return_value, zval *params)
     p += 4;
     buffer->length += 9;
 
+    // TODO: support more types
     if (param_count != 0)
     {
         // null bitmap
@@ -1465,7 +1467,6 @@ void mysql_statement::fetch(zval *return_value)
         RETURN_NULL();
     }
     do {
-        mysql::row_u row;
         const char *p = data + SW_MYSQL_PACKET_HEADER_SIZE, *null_bitmap = p;
         size_t null_count = ((result.get_fields_length() + 9) / 8) + 1;
 
@@ -1538,6 +1539,7 @@ void mysql_statement::fetch(zval *return_value)
             {
                 _add_string:
                 mysql::row_data_text row_data_text(&p);
+                // TODO: handle big data
 //                tmp_len = mysql_length_coded_binary(&buf[read_n], &len, &nul, packet_length - read_n);
 //                if (tmp_len == -1)
 //                {
@@ -1575,83 +1577,73 @@ void mysql_statement::fetch(zval *return_value)
             case SW_MYSQL_TYPE_TINY:
                 if (field->flags & SW_MYSQL_UNSIGNED_FLAG)
                 {
-                    row.utiny = *(uint8_t *) p;
-                    add_assoc_long_ex(return_value, field->name, field->name_length, row.utiny);
-                    p += sizeof(row.utiny);
-                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%u", field->name_length, field->name, row.utiny);
+                    add_assoc_long_ex(return_value, field->name, field->name_length, *(uint8_t *) p);
+                    p += sizeof(uint8_t);
+                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%u", field->name_length, field->name, *(uint8_t *) p);
                 }
                 else
                 {
-                    row.stiny = *(int8_t *) p;
-                    add_assoc_long_ex(return_value, field->name, field->name_length, row.stiny);
-                    p += sizeof(row.stiny);
-                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%d", field->name_length, field->name, row.stiny);
+                    add_assoc_long_ex(return_value, field->name, field->name_length, *(int8_t *) p);
+                    p += sizeof(int8_t);
+                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%d", field->name_length, field->name, *(int8_t *) p);
                 }
                 break;
             case SW_MYSQL_TYPE_SHORT:
                 if (field->flags & SW_MYSQL_UNSIGNED_FLAG)
                 {
-                    row.small = *(uint16_t *) p;
-                    add_assoc_long_ex(return_value, field->name, field->name_length, row.small);
-                    p += sizeof(row.small);
-                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%u", field->name_length, field->name, row.small);
+                    add_assoc_long_ex(return_value, field->name, field->name_length, *(uint16_t *) p);
+                    p += sizeof(uint16_t);
+                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%u", field->name_length, field->name, *(uint16_t *) p);
                 }
                 else
                 {
-                    row.ssmall = *(int16_t *) p;
-                    add_assoc_long_ex(return_value, field->name, field->name_length, row.ssmall);
-                    p += sizeof(row.ssmall);
-                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%d", field->name_length, field->name, row.ssmall);
+                    add_assoc_long_ex(return_value, field->name, field->name_length, *(int16_t *) p);
+                    p += sizeof(int16_t);
+                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%d", field->name_length, field->name, *(int16_t *) p);
                 }
                 break;
             case SW_MYSQL_TYPE_INT24:
             case SW_MYSQL_TYPE_LONG:
                 if (field->flags & SW_MYSQL_UNSIGNED_FLAG)
                 {
-                    row.uint = *(uint32_t *) p;
-                    add_assoc_long_ex(return_value, field->name, field->name_length, row.uint);
-                    p += sizeof(row.uint);
-                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%u", field->name_length, field->name, row.uint);
+                    add_assoc_long_ex(return_value, field->name, field->name_length, *(uint32_t *) p);
+                    p += sizeof(uint32_t);
+                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%u", field->name_length, field->name, *(uint32_t *) p);
                 }
                 else
                 {
-                    row.sint = *(int32_t *) p;
-                    add_assoc_long_ex(return_value, field->name, field->name_length, row.sint);
-                    p += sizeof(row.sint);
-                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%d", field->name_length, field->name, row.sint);
+                    add_assoc_long_ex(return_value, field->name, field->name_length, *(int32_t *) p);
+                    p += sizeof(int32_t);
+                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%d", field->name_length, field->name, *(int32_t *) p);
                 }
                 break;
             case SW_MYSQL_TYPE_LONGLONG:
                 if (field->flags & SW_MYSQL_UNSIGNED_FLAG)
                 {
-                    row.ubigint = *(uint64_t *) p;
-                    add_assoc_ulong_safe_ex(return_value, field->name, field->name_length, row.ubigint);
-                    p += sizeof(row.ubigint);
-                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%llu", field->name_length, field->name, row.ubigint);
+                    add_assoc_ulong_safe_ex(return_value, field->name, field->name_length, *(uint64_t *) p);
+                    p += sizeof(uint64_t);
+                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%llu", field->name_length, field->name, *(uint64_t *) p);
                 }
                 else
                 {
-                    row.sbigint = *(int64_t *) p;
-                    add_assoc_long_ex(return_value, field->name, field->name_length, row.sbigint);
-                    p += sizeof(row.sbigint);
-                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%lld", field->name_length, field->name, row.sbigint);
+                    add_assoc_long_ex(return_value, field->name, field->name_length, *(int64_t *) p);
+                    p += sizeof(int64_t);
+                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%lld", field->name_length, field->name, *(int64_t *) p);
                 }
                 break;
             case SW_MYSQL_TYPE_FLOAT:
                 {
-                    row.mfloat = *(float *) p;
-                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%.7f", field->name_length, field->name, row.mfloat);
-                    row.mdouble = _php_math_round(row.mfloat, 5, PHP_ROUND_HALF_DOWN);
-                    add_assoc_double_ex(return_value, field->name, field->name_length, row.mdouble);
-                    p += sizeof(row.mfloat);
+                    double dv = sw_php_math_round(*(float *) p, 5, PHP_ROUND_HALF_DOWN);
+                    add_assoc_double_ex(return_value, field->name, field->name_length, dv);
+                    p += sizeof(float);
+                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%.7f", field->name_length, field->name, dv);
                 }
                 break;
             case SW_MYSQL_TYPE_DOUBLE:
                 {
-                    row.mdouble = *(double *) p;
-                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%.16f", field->name_length, field->name, row.mdouble);
-                    add_assoc_double_ex(return_value, field->name, field->name_length, row.mdouble);
-                    p += sizeof(row.mdouble);
+                    add_assoc_double_ex(return_value, field->name, field->name_length, *(double *) p);
+                    p += sizeof(double);
+                    swTraceLog(SW_TRACE_MYSQL_CLIENT, "%.*s=%.16f", field->name_length, field->name, *(double *) p);
                 }
                 break;
             default:

@@ -663,6 +663,14 @@ static sw_inline void sw_zval_free(zval *val)
 #define SW_REGISTER_STRING_CONSTANT(name, value)  REGISTER_STRING_CONSTANT(name, (char *) value, CONST_CS | CONST_PERSISTENT)
 #define SW_REGISTER_STRINGL_CONSTANT(name, value) REGISTER_STRINGL_CONSTANT(name, (char *) value, CONST_CS | CONST_PERSISTENT)
 
+//----------------------------------Number API-----------------------------------
+
+#if PHP_VERSION_ID >= 70011
+#define sw_php_math_round(value, places, mode) _php_math_round(value, places, mode)
+#else
+#define sw_php_math_round(value, places, mode) ((double) (value))
+#endif
+
 //----------------------------------String API-----------------------------------
 
 #define SW_PHP_OB_START(zoutput) \
