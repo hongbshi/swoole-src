@@ -285,15 +285,14 @@ public:
     void fetch_all(zval *return_value);
     void next_result(zval *return_value);
     bool recv();
-    bool begin();
-    bool commit();
-    bool rollback();
 
     bool send_prepare_request(const char *statement, size_t statement_length);
     mysql_statement* recv_prepare_response();
 
     void close();
 
+    /* we must destroy the client after all statements have been destroyed,
+     * unless we manually close the client {{{ */
     inline bool get_deletable_and_sign()
     {
         waiting_for_deletion = true;
@@ -304,6 +303,7 @@ public:
     {
         return waiting_for_deletion && statements.empty();
     }
+    /* }}} */
 
     ~mysql_client()
     {
@@ -312,10 +312,14 @@ public:
     }
 
 private:
+    /* unable to support both features at the same time, so we have to set them by method {{{ */
     bool fetch_mode = false;
     bool defer = false;
+    /* }}} */
+
     bool waiting_for_deletion = false;
 
+    // usually mysql->connect = connect(TCP) + handshake
     bool handshake();
 };
 
@@ -727,11 +731,11 @@ bool mysql_client::send_command(enum sw_mysql_command command, const char* sql, 
     }
     else
     {
+        /* if the data is larger than page_size, copy memory to the kernel buffer multiple times is much faster */
         size_t send_s = MIN(length, SW_MYSQL_MAX_PACKET_BODY_SIZE - 1), send_n = send_s, number = 0;
         mysql::command_packet command_packet(command);
         command_packet.set_header(1 + send_s, number++);
 
-        /** Notice: For the first send, the timeout parameter is unnecessary */
         if (unlikely(
             !send_raw(command_packet.get_data(), SW_MYSQL_PACKET_HEADER_SIZE + 1)) ||
             !send_raw(sql, send_s)
@@ -739,6 +743,7 @@ bool mysql_client::send_command(enum sw_mysql_command command, const char* sql, 
         {
             return false;
         }
+        /* MySQL single packet size is 16M, we must subpackage */
         while (send_n < length)
         {
             send_s = MIN(length - send_n, SW_MYSQL_MAX_PACKET_BODY_SIZE);
