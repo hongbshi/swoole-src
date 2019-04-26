@@ -5,6 +5,7 @@ swoole_mysql_coro: select huge data from db (10M~64M)
 require __DIR__ . '/../include/skipif.inc';
 skip_if_in_valgrind();
 skip_if_pdo_not_support_mysql8();
+skip_unsupported(); // TODO: re-support it
 ?>
 --FILE--
 <?php
@@ -90,7 +91,7 @@ SQL
                 $chan->push(['mysql_query', $mysql_query->query("{$sql}{$fid}")[0]]);
             });
             for ($i = 3; $i--;) {
-                list($from, $result) = $chan->pop(10);
+                list($from, $result) = $chan->pop();
                 if ($result['fid'] === $fid) {
                     Assert::eq($result['firmware'], $firmware);
                     Assert::eq($result['f_md5'], $f_md5);

@@ -38,24 +38,6 @@ function mysql(): Co\MySQL
     return $mysql;
 }
 
-go(function () {
-    $time = 0;
-    while (true) {
-        Co::sleep(0.1);
-        $time += 0.1;
-        if (Co::stats()['coroutine_num'] === 1) {
-            break;
-        }
-        if ($time > 30) {
-            var_dump(Co::stats());
-            foreach (Co::list() as $cid) {
-                var_dump(Co::getBackTrace($cid) + ['cid' => $cid]);
-            }
-            break;
-        }
-    }
-});
-
 for ($c = MAX_CONCURRENCY_LOW; $c--;) {
     go(function () use ($c) {
         // gen table structure

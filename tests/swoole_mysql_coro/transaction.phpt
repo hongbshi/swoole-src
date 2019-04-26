@@ -42,10 +42,10 @@ go(function () {
 });
 ?>
 --EXPECTF--
-Deprecated: Swoole\Coroutine\MySQL::%s(): %s in %s on line %d
+Warning: Swoole\Coroutine\MySQL::%s(): %s in %s on line %d
 
-Deprecated: Swoole\Coroutine\MySQL::%s(): %s in %s on line %d
+Warning: Swoole\Coroutine\MySQL::%s(): %s in %s on line %d
 
-Deprecated: Swoole\Coroutine\MySQL::%s(): %s in %s on line %d
+Warning: Swoole\Coroutine\MySQL::%s(): %s in %s on line %d
 
-Deprecated: Swoole\Coroutine\MySQL::%s(): %s in %s on line %d
+Warning: Swoole\Coroutine\MySQL::%s(): %s in %s on line %d
