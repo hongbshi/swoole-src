@@ -821,7 +821,7 @@ bool mysql_client::handshake()
 #ifdef SW_MYSQL_RSA_SUPPORT
         // tell the server we are prepared
         do {
-            mysql::auth_signature_prepared_packet prepared(request.header.number);
+            mysql::auth_signature_prepared_packet prepared(request.header.number + 1);
             if (unlikely(!send_packet(&prepared)))
             {
                 return false;
@@ -848,7 +848,12 @@ bool mysql_client::handshake()
 #endif
     }
     case SW_MYSQL_PACKET_OK:
+    {
+#ifdef SW_LOG_TRACE_OPEN
+        mysql::ok_packet ok_packet(data);
+#endif
         return true;
+    }
     case SW_MYSQL_PACKET_ERR:
         server_error(data);
         return false;
