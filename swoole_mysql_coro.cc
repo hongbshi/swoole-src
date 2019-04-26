@@ -127,7 +127,7 @@ public:
     {
         if (unlikely(fetch_mode && v))
         {
-            error_code = EINVAL;
+            error_code = ENOTSUP;
             error_msg = "can not use defer mode when fetch mode is on";
             return false;
         }
@@ -608,7 +608,9 @@ bool mysql_client::connect(std::string host, uint16_t port, bool ssl)
             socket = nullptr;
             return false;
         }
+#ifdef SW_USE_OPENSSL
         socket->open_ssl = ssl;
+#endif
         socket->set_timeout(connect_timeout, SW_TIMEOUT_CONNECT);
         add_timeout_controller(connect_timeout, SW_TIMEOUT_ALL);
         if (!socket->connect(host, port))
@@ -618,7 +620,9 @@ bool mysql_client::connect(std::string host, uint16_t port, bool ssl)
         }
         this->host = host;
         this->port = port;
+#ifdef SW_USE_OPENSSL
         this->ssl = ssl;
+#endif
         if (!handshake())
         {
             close();
@@ -1904,12 +1908,26 @@ static PHP_METHOD(swoole_mysql_coro, connect)
         }
         else
         {
-            zend_throw_exception(swoole_mysql_coro_exception_ce, "HOST parameter is required.", 11);
+            zend_throw_exception(swoole_mysql_coro_exception_ce, "HOST parameter is required.", EINVAL);
             RETURN_FALSE;
         }
         if (php_swoole_array_get_value(ht, "port", ztmp))
         {
             mc->port = zval_get_long(ztmp);
+        }
+        if (php_swoole_array_get_value(ht, "ssl", ztmp))
+        {
+            mc->ssl = zval_is_true(ztmp);
+#ifndef SW_USE_OPENSSL
+            if (unlikely(mc->ssl))
+            {
+                zend_throw_exception_ex(
+                    swoole_mysql_coro_exception_ce,
+                    EPROTONOSUPPORT, "you must configure with `enable-openssl` to support ssl connection"
+                );
+                RETURN_FALSE;
+            }
+#endif
         }
         if (php_swoole_array_get_value(ht, "user", ztmp))
         {
@@ -1917,7 +1935,7 @@ static PHP_METHOD(swoole_mysql_coro, connect)
         }
         else
         {
-            zend_throw_exception(swoole_mysql_coro_exception_ce, "USER parameter is required.", 11);
+            zend_throw_exception(swoole_mysql_coro_exception_ce, "USER parameter is required.", EINVAL);
             RETURN_FALSE;
         }
         if (php_swoole_array_get_value(ht, "password", ztmp))
@@ -1926,7 +1944,7 @@ static PHP_METHOD(swoole_mysql_coro, connect)
         }
         else
         {
-            zend_throw_exception(swoole_mysql_coro_exception_ce, "PASSWORD parameter is required.", 11);
+            zend_throw_exception(swoole_mysql_coro_exception_ce, "PASSWORD parameter is required.", EINVAL);
             RETURN_FALSE;
         }
         if (php_swoole_array_get_value(ht, "database", ztmp))
@@ -1935,7 +1953,7 @@ static PHP_METHOD(swoole_mysql_coro, connect)
         }
         else
         {
-            zend_throw_exception(swoole_mysql_coro_exception_ce, "DATABASE parameter is required.", 11);
+            zend_throw_exception(swoole_mysql_coro_exception_ce, "DATABASE parameter is required.", EINVAL);
             RETURN_FALSE;
         }
         if (php_swoole_array_get_value(ht, "timeout", ztmp))
@@ -1948,7 +1966,7 @@ static PHP_METHOD(swoole_mysql_coro, connect)
             char charset = mysql::get_charset(zstr_charset.val());
             if (charset < 0)
             {
-                zend_throw_exception_ex(swoole_mysql_coro_exception_ce, 11, "Unknown charset [%s].", zstr_charset.val());
+                zend_throw_exception_ex(swoole_mysql_coro_exception_ce, EINVAL, "Unknown charset [%s].", zstr_charset.val());
                 RETURN_FALSE;
             }
             mc->charset = charset;
@@ -1961,7 +1979,8 @@ static PHP_METHOD(swoole_mysql_coro, connect)
         {
             if (UNEXPECTED(!mc->set_fetch_mode(zval_is_true(ztmp))))
             {
-                swoole_php_fatal_error(E_WARNING, "%s", mc->error_msg.c_str());
+                zend_throw_exception_ex(swoole_mysql_coro_exception_ce, mc->error_code, "%s", mc->error_msg.c_str());
+                RETURN_FALSE;
             }
         }
     }
@@ -2002,8 +2021,7 @@ static PHP_METHOD(swoole_mysql_coro, setDefer)
     bool ret = mc->set_defer(defer);
     if (UNEXPECTED(!ret))
     {
-        swoole_php_fatal_error(E_WARNING, "%s", mc->error_msg.c_str());
-        swoole_mysql_coro_sync_error_properties(getThis(), mc->error_code, mc->error_msg.c_str(), mc->is_connect());
+        zend_throw_exception_ex(swoole_mysql_coro_exception_ce, mc->error_code, "%s", mc->error_msg.c_str());
     }
     RETURN_BOOL(ret);
 }
@@ -2175,7 +2193,10 @@ static void swoole_mysql_coro_query_transcation(INTERNAL_FUNCTION_PARAMETERS, co
 
     if (UNEXPECTED(mc->get_defer()))
     {
-        swoole_php_fatal_error(E_WARNING, "you should not query transaction when defer mode is on, if you want, please use `query('%s')` instead", command);
+        zend_throw_exception_ex(
+            swoole_mysql_coro_exception_ce, EPERM,
+            "you should not query transaction when defer mode is on, if you want, please use `query('%s')` instead", command
+        );
         RETURN_FALSE;
     }
 

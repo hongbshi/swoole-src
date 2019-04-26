@@ -29,7 +29,6 @@
 #endif
 
 #include <string>
-#include <vector>
 
 enum sw_mysql_command
 {
@@ -327,7 +326,7 @@ enum sw_mysql_server_status_flags
                 sw_mysql_int4store((T),def_temp); \
                 sw_mysql_int4store((T+4),def_temp2); } while (0)
 
-#if 1
+#if defined(SW_DEBUG) && defined(SW_LOG_TRACE_OPEN)
 #define swMysqlPacketDump(_length, _number, data, title) \
 if (SW_LOG_TRACE >= SwooleG.log_level && (SW_TRACE_MYSQL_CLIENT & SwooleG.trace_flags)) \
     do { \
@@ -979,20 +978,20 @@ public:
     }
 };
 
-typedef union
-{
-    signed char stiny;
-    uchar utiny;
-    uchar mbool;
-    short ssmall;
-    unsigned short small;
-    int sint;
-    uint32_t uint;
-    long long sbigint;
-    unsigned long long ubigint;
-    float mfloat;
-    double mdouble;
-} row_u;
+//    typedef union
+//    {
+//        signed char stiny;
+//        uchar utiny;
+//        uchar mbool;
+//        short ssmall;
+//        unsigned short small;
+//        int sint;
+//        uint32_t uint;
+//        long long sbigint;
+//        unsigned long long ubigint;
+//        float mfloat;
+//        double mdouble;
+//    } row;
 
 class string
 {
