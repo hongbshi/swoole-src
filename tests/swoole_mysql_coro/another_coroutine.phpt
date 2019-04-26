@@ -45,7 +45,7 @@ $process->start();
 Swoole\Process::wait();
 ?>
 --EXPECTF--
-mysql client is busy now, please recv or fetch all unread data and wait for response then try again
+mysql client is busy now, %s
 [%s]	ERROR	(PHP Fatal Error: %d):
 Swoole\Coroutine\MySQL::recv: Socket#%d has already been bound to another coroutine#%d, reading of the same socket in multiple coroutines at the same time is not allowed
 Stack trace:
