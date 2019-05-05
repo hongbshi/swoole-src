@@ -599,10 +599,10 @@ void http_client::set_basic_auth(const std::string & username, const std::string
     if(output == nullptr) return;
 
     //basic64 encode
-    sprintf((char*)output, "Basic ");
+    sprintf(output, "Basic ");
     swBase64_encode((const unsigned char*)input.c_str(), input_len, output + 6);
 
-    basic_auth = std::string((const char*)output, output_len + 6);
+    basic_auth = std::string(output, output_len + 6);
     efree(output);
 }
 
